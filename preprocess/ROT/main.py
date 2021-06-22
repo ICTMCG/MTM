@@ -9,33 +9,28 @@
 
 import os
 import time
-import pickle
 import json
 from tqdm import tqdm
 
 import random
 import numpy as np
-import sys
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torch.utils.data.distributed import DistributedSampler
 from torch.cuda.amp import GradScaler, autocast
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torchsummary import summary
 
 from transformers import AdamW, get_cosine_schedule_with_warmup
 
 from RougeBert import RougeBert
 from dataset_cn import DatasetCN
-from config import parser, mode_dicts
+from config import parser
 
 
 def evaluate(args, loader, model, criterion, type):
     if args.local_rank in [-1, 0]:
-        print('Eval time:', time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
+        print('Eval time:', time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
     model.eval()
     total_loss = 0.
     outputs = []
@@ -44,7 +39,8 @@ def evaluate(args, loader, model, criterion, type):
             # (bz, 2)
             output = model(qidxs, didxs, sidxs)
             labels = torch.cat([x[:, None] for x in labels], dim=-1)
-            labels = torch.as_tensor(labels, dtype=torch.float, device=args.device)
+            labels = torch.as_tensor(
+                labels, dtype=torch.float, device=args.device)
 
             loss = criterion(output, labels.to(args.device))
             total_loss += loss.item()
@@ -53,7 +49,8 @@ def evaluate(args, loader, model, criterion, type):
                 qidx = qidx.item()
                 didx = didxs[i].item()
                 sidx = sidxs[i].item()
-                outputs.append((qidx, didx, sidx, output[i].cpu().numpy().tolist()))
+                outputs.append(
+                    (qidx, didx, sidx, output[i].cpu().numpy().tolist()))
 
     if not args.evaluate:
         e = args.current_epoch
@@ -75,38 +72,42 @@ if __name__ == "__main__":
         args.epochs = 2
 
     if args.local_rank in [0, -1]:
-        print('\n{} Experimental Dataset: {} {}\n'.format('=' * 20, args.dataset, '=' * 20))
-        print('Start time:', time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
+        print('\n{} Experimental Dataset: {} {}\n'.format(
+            '=' * 20, args.dataset, '=' * 20))
+        print('Start time:', time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
 
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    args.n_gpu = torch.cuda.device_count()
+    # args.n_gpu = torch.cuda.device_count()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
+    # if args.n_gpu > 0:
+    #     torch.cuda.manual_seed_all(args.seed)
 
-    if args.n_gpu > 1:
-        torch.cuda.set_device(args.local_rank)
-        torch.distributed.init_process_group(backend='nccl', init_method='env://')
-        dist.barrier()
+    # if args.n_gpu > 1:
+    #     torch.cuda.set_device(args.local_rank)
+    #     torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    #     dist.barrier()
 
-    # dir to save
-    if args.save == './ckpts/':
-        dirs = os.listdir(args.save)
-        if len(dirs) == 0:
-            args.save += '0/'
-        else:
-            dirs = [int(d) for d in dirs]
-            dirs.sort()
-            args.save += (str(dirs[-1] + 1) + '/')
+    # # dir to save
+    # if args.save == './ckpts/':
+    #     dirs = os.listdir(args.save)
+    #     if len(dirs) == 0:
+    #         args.save += '0/'
+    #     else:
+    #         dirs = [int(d) for d in dirs]
+    #         dirs.sort()
+    #         args.save += (str(dirs[-1] + 1) + '/')
 
-    if args.local_rank in [0, -1]:
-        print('save path: ', args.save, '\n')
+    # if args.local_rank in [0, -1]:
+    # print('save path: ', args.save, '\n')
 
-    if args.local_rank in [-1, 0]:
-        writer = SummaryWriter(log_dir=args.save)
+    print('save path: ', args.save, '\n')
+
+    # if args.local_rank in [-1, 0]:
+    #     writer = SummaryWriter(log_dir=args.save)
 
     print('-----------------------------------------\nLoading model...\n')
     start = time.time()
@@ -126,40 +127,42 @@ if __name__ == "__main__":
     #      'weight_decay_rate': 0.0}
     # ]
 
-
     if args.fp16:
         scaler = GradScaler()
 
     model = model.cuda()
-    if args.local_rank != -1:
-        model = DDP(
-            model,
-            device_ids=[args.local_rank],
-            output_device=args.local_rank,
-        )
+    # if args.local_rank != -1:
+    #     model = DDP(
+    #         model,
+    #         device_ids=[args.local_rank],
+    #         output_device=args.local_rank,
+    #     )
 
     if args.resume != '':
-        if args.n_gpu > 1:
-            map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
-            resume_dict = torch.load(args.resume, map_location=map_location)
-        else:
-            resume_dict = torch.load(args.resume)
+        # if args.n_gpu > 1:
+        #     map_location = {'cuda:%d' % 0: 'cuda:%d' % args.local_rank}
+        #     resume_dict = torch.load(args.resume, map_location=map_location)
+        # else:
+        #     resume_dict = torch.load(args.resume)
+
+        resume_dict = torch.load(args.resume)
 
         model.load_state_dict(resume_dict['state_dict'])
         optimizer.load_state_dict(resume_dict['optimizer'])
         args.start_epoch = resume_dict['epoch'] + 1
 
-    if args.local_rank in [-1, 0]:
-        print('Loading data...')
-        train_dataset = DatasetCN(args.topk, 'rouge.sent', dataset=args.dataset)
+    # if args.local_rank in [-1, 0]:
+    print('Loading data...')
+    train_dataset = DatasetCN(args.topk, 'rouge.sent', dataset=args.dataset)
 
     if args.debug:
-        train_dataset = DatasetCN(args.topk, 'rouge.sent', nrows=20 * args.batch_size, dataset=args.dataset)
+        train_dataset = DatasetCN(
+            args.topk, 'rouge.sent', nrows=20 * args.batch_size, dataset=args.dataset)
 
-    if args.local_rank != -1:
-        train_sampler = DistributedSampler(train_dataset)
-    else:
-        train_sampler = RandomSampler(train_dataset)
+    # if args.local_rank != -1:
+    #     train_sampler = DistributedSampler(train_dataset)
+    # else:
+    train_sampler = RandomSampler(train_dataset)
 
     start = time.time()
     train_loader = DataLoader(
@@ -173,14 +176,15 @@ if __name__ == "__main__":
 
     # rouge_labels = pickle.load(open('./data/rouge/rouge2_labels.pkl', 'rb'))
 
-    if args.local_rank in [-1, 0]:
-        print('Loading data time:', int(time.time() - start))
+    # if args.local_rank in [-1, 0]:
+    print('Loading data time:', int(time.time() - start))
 
     if args.resume == '':
         args_file = os.path.join(args.save, 'args.txt')
     else:
         resume_from = args.resume.split('/')[-1]
-        args_file = os.path.join(args.save, 'args_resume_from_{}.txt'.format(resume_from))
+        args_file = os.path.join(
+            args.save, 'args_resume_from_{}.txt'.format(resume_from))
     with open(args_file, 'w') as f:
         print_s = ''
         for arg in vars(args):
@@ -200,7 +204,8 @@ if __name__ == "__main__":
         else:
             print('Start Evaluating... local_rank=', args.local_rank)
             args.current_epoch = args.start_epoch
-            eval_train_loss = evaluate(args, train_loader, model, criterion, 'train')
+            eval_train_loss = evaluate(
+                args, train_loader, model, criterion, 'train')
         exit()
 
     last_epoch = args.start_epoch if args.start_epoch != 0 else -1
@@ -208,8 +213,8 @@ if __name__ == "__main__":
                                                 last_epoch)
 
     # Training
-    if args.local_rank in [-1, 0]:
-        print('Start training...')
+    # if args.local_rank in [-1, 0]:
+    print('Start training...')
 
     start = time.time()
     args.global_step = 0
@@ -225,9 +230,10 @@ if __name__ == "__main__":
 
     for epoch in range(args.start_epoch, args.epochs):
         args.current_epoch = epoch
-        if args.local_rank in [-1, 0]:
-            print('\n------------------------------------------------\n')
-            print('Start Training Epoch', epoch, ':', time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
+        # if args.local_rank in [-1, 0]:
+        print('\n------------------------------------------------\n')
+        print('Start Training Epoch', epoch, ':', time.strftime(
+            "%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
         model.train()
 
         if args.fp16 and args.n_gpu > 1:
@@ -243,7 +249,8 @@ if __name__ == "__main__":
                 # labels: two elements. every element's shape = tensor([bz])
                 # so: two (bz, 1) -> (bz, 2)
                 labels = torch.cat([x[:, None] for x in labels], dim=-1)
-                labels = torch.as_tensor(labels, dtype=torch.float, device=args.device)
+                labels = torch.as_tensor(
+                    labels, dtype=torch.float, device=args.device)
 
                 loss = criterion(output, labels.to(args.device))
 
@@ -251,7 +258,8 @@ if __name__ == "__main__":
                 reg_loss = 0
                 for layer in layers:
                     if 'weight' in layer or 'bias' in layer:
-                        diff = init_model_params[layer] - model.state_dict()[layer]
+                        diff = init_model_params[layer] - \
+                            model.state_dict()[layer]
                         reg_loss += diff.norm(2) ** 2
 
                 loss += args.rouge_bert_regularize * reg_loss
@@ -267,38 +275,30 @@ if __name__ == "__main__":
             if scheduler:
                 scheduler.step()
 
-            if args.local_rank in [-1, 0]:
-                writer.add_scalar("Loss/train_epoch", loss.item(), args.global_step)
-                train_loss += loss.item()
-                writer.flush()
+            # if args.local_rank in [-1, 0]:
+            #     writer.add_scalar("Loss/train_epoch", loss.item(), args.global_step)
+            #     train_loss += loss.item()
+            #     writer.flush()
+            train_loss += loss.item()
 
             args.global_step += 1
 
         # val_loss = evaluate(args, train_loader, model, criterion, 'train')
 
-        if args.local_rank in [-1, 0]:
-            writer.add_scalar("Loss/train", train_loss / len(train_loader), epoch)
-            writer.add_scalar("Misc/learning_rate", lr, epoch)
+        # if args.local_rank in [-1, 0]:
+        print(f"Epoch [{epoch}/{args.epochs}]\t \
+                Train Loss: {train_loss / len(train_loader)}\t \
+                lr: {round(lr, 5)}")
 
-            writer.flush()
+        torch.save({
+            'epoch': epoch,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict()
+        },
+            os.path.join(args.save, '{}.pt'.format(epoch))
+        )
 
-            # print(f"Epoch [{epoch}/{args.epochs}]\t \
-            #                     Train Loss: {train_loss / len(train_loader)}\t \
-            #                     Val Loss: {val_loss / len(train_loader)}\t \
-            #                     lr: {round(lr, 5)}")
-
-            print(f"Epoch [{epoch}/{args.epochs}]\t \
-                    Train Loss: {train_loss / len(train_loader)}\t \
-                    lr: {round(lr, 5)}")
-
-            torch.save({
-                'epoch': epoch,
-                'state_dict': model.state_dict(),
-                'optimizer': optimizer.state_dict()
-            },
-                os.path.join(args.save, '{}.pt'.format(epoch))
-            )
-
-    if args.local_rank in [-1, 0]:
-        print('Training Time:', int(time.time() - start))
-        print('End time:', time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
+    # if args.local_rank in [-1, 0]:
+    print('Training Time:', int(time.time() - start))
+    print('End time:', time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
