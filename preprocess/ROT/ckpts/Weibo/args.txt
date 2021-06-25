@@ -1,0 +1,18 @@
+dataset	Weibo
+pretrained_model	bert-base-chinese
+rouge_bert_encoder_layers	1
+rouge_bert_regularize	0.01
+bert_max_length	256
+query_max_length	180
+emsize	768
+lr	5e-05
+epochs	10
+batch_size	512
+start_epoch	0
+resume	
+save	./ckpts/Weibo
+seed	42
+device	cuda
+fp16	True
+local_rank	-1
+debug	False

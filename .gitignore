@@ -11,3 +11,8 @@
 *.pt
 *.log
 *.pkl
+*.train
+*.val
+*.test
+*.line
+*.rouge
