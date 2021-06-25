@@ -6,7 +6,7 @@ bert_max_length	256
 query_max_length	180
 emsize	768
 lr	5e-05
-epochs	10
+epochs	2
 batch_size	512
 start_epoch	0
 resume	
@@ -15,4 +15,4 @@ seed	42
 device	cuda
 fp16	True
 local_rank	-1
-debug	False
+debug	True

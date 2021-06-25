@@ -26,6 +26,44 @@ from DatasetLoader import DatasetLoader
 from config import parser
 
 
+def evaluate(args, loader, model, criterion, type):
+    print('Eval time:', time.strftime(
+        "%Y-%m-%d %H:%M:%S", time.localtime(time.time())))
+
+    model.eval()
+    total_loss = 0.
+    outputs = []
+    num_batches = 0
+
+    with torch.no_grad():
+        for step, (qidxs, didxs, sidxs, labels) in enumerate(tqdm(loader)):
+            # (bz, 2)
+            output = model(qidxs, didxs, sidxs)
+            labels = torch.cat([x[:, None] for x in labels], dim=-1)
+            labels = torch.as_tensor(
+                labels, dtype=torch.float, device=args.device)
+
+            loss = criterion(output, labels)
+            total_loss += loss.item()
+
+            for i, qidx in enumerate(qidxs):
+                qidx = qidx.item()
+                didx = didxs[i].item()
+                sidx = sidxs[i].item()
+                outputs.append(
+                    (qidx, didx, sidx, output[i].cpu().numpy().tolist()))
+
+            num_batches += 1
+
+    e = args.current_epoch
+    total_loss /= num_batches
+    file = os.path.join(args.save, type + '_outputs_' + str(e) + '_' + str(
+        args.local_rank) + '_loss_{:.4f}'.format(total_loss) + '.json')
+    json.dump(outputs, open(file, 'w'))
+
+    return total_loss
+
+
 if __name__ == "__main__":
     args = parser.parse_args()
 
@@ -76,11 +114,10 @@ if __name__ == "__main__":
     print('Loading data...')
     start = time.time()
 
-    if args.debug:
-        train_dataset = DatasetLoader(
-            'train', nrows=20 * args.batch_size, dataset=args.dataset)
-    else:
-        train_dataset = DatasetLoader('train', dataset=args.dataset)
+    nrows = 20 * args.batch_size if args.debug else None
+    train_dataset = DatasetLoader('train', nrows=nrows, dataset=args.dataset)
+    val_dataset = DatasetLoader('val', nrows=nrows, dataset=args.dataset)
+    test_dataset = DatasetLoader('test', nrows=nrows, dataset=args.dataset)
 
     train_sampler = RandomSampler(train_dataset)
     train_loader = DataLoader(
@@ -92,10 +129,27 @@ if __name__ == "__main__":
         sampler=train_sampler
     )
 
-    with open('./data/{}/rouge2_labels.pkl'.format(args.dataset), 'rb') as f:
-        rouge_labels = pickle.load(f)
+    val_sampler = RandomSampler(val_dataset)
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        num_workers=8,
+        pin_memory=(torch.cuda.is_available()),
+        drop_last=False,
+        sampler=val_sampler
+    )
 
-    print('Loading data time:', int(time.time() - start))
+    test_sampler = RandomSampler(test_dataset)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        num_workers=8,
+        pin_memory=(torch.cuda.is_available()),
+        drop_last=False,
+        sampler=test_sampler
+    )
+
+    print('Loading data time: {}s'.format(int(time.time() - start)))
 
     if args.resume == '':
         args_file = os.path.join(args.save, 'args.txt')
@@ -129,6 +183,7 @@ if __name__ == "__main__":
         layers.append(name)
     init_model_params = model.state_dict()
 
+    best_val_loss = None
     for epoch in range(args.start_epoch, args.epochs):
         args.current_epoch = epoch
         print('\n------------------------------------------------\n')
@@ -173,17 +228,22 @@ if __name__ == "__main__":
             train_loss += loss.item()
             args.global_step += 1
 
-        print(f"Epoch [{epoch}/{args.epochs}]\t \
-                Train Loss: {train_loss / len(train_loader)}\t \
-                lr: {round(lr, 5)}")
+        train_loss /= len(train_loader)
+        val_loss = evaluate(args, val_loader, model, criterion, type='val')
+        test_loss = evaluate(args, test_loader, model, criterion, type='test')
 
-        torch.save({
-            'epoch': epoch,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict()
-        },
-            os.path.join(args.save, '{}.pt'.format(epoch))
-        )
+        if best_val_loss is None or best_val_loss > val_loss:
+            best_val_loss = val_loss
+            torch.save({
+                'epoch': epoch,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict()
+            },
+                os.path.join(args.save, '{}.pt'.format(epoch))
+            )
+
+        print('Epoch [{}/{}]\t Train Loss: {}\t Val Loss: {}\t Test Loss: {}\t lr: {}\n'.format(
+            epoch, args.epochs, train_loss, val_loss, test_loss, lr))
 
     print('Training Time:', int(time.time() - start))
     print('End time:', time.strftime(
