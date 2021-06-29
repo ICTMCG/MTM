@@ -91,7 +91,12 @@ class RougeBert(nn.Module):
         d = d[:self.doc_maxlen]
 
         padding_length = self.maxlen - (len(q) + len(d) + 3)
-        attention_mask = [1] * (len(q) + len(d) + 3) + [0] * padding_length
+
+        if len(d) != 0:
+            attention_mask = [1] * (len(q) + len(d) + 3) + [0] * padding_length
+        else:
+            attention_mask = [1] * (len(q) + 1) + [0] * (self.maxlen - (len(q) + 1))
+
         input_ids = [101] + q + [102] + d + [102] + [103] * padding_length
         token_type_ids = [0] * (len(q) + 2) + [1] * (self.maxlen - len(q) - 2)
 
