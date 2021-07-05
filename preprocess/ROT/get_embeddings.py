@@ -60,7 +60,7 @@ def get_total_embeddings(total_tokens, type='static'):
 if __name__ == '__main__':
     parser.add_argument('--rouge_bert_model_file', type=str)
     parser.add_argument('--embeddings_type', type=str,
-                        default='static', help='[static, dynamic]˝')
+                        default='static', help='[static, dynamic]')
     args = parser.parse_args()
 
     rouge_bert_model = RougeBert(args)
@@ -83,7 +83,6 @@ if __name__ == '__main__':
 
     print('\nClaims\' Embeddings...\n')
     fn_embeddings = get_total_embeddings(fn_tokens, type=args.embeddings_type)
-
     print('\nArticles\' Embeddings...\n')
     dn_unzip_embeddings = get_total_embeddings(dn_unzip_tokens, type=args.embeddings_type)
 
