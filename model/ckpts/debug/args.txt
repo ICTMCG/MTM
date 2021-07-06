@@ -16,7 +16,7 @@ emsize	768
 finetune_front_layers	False
 finetune_inter_layers	True
 bert_mlp_layers	5
-lr	5e-05
+lr	5e-06
 epochs	2
 batch_size	32
 start_epoch	0

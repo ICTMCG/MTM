@@ -226,9 +226,9 @@ class MTM(nn.Module):
             train_dataset = DatasetLoader(
                 'train.line', nrows=20 * self.args.batch_size, dataset=self.args.dataset)
             val_dataset = DatasetLoader(
-                'val', nrows=2, dataset=self.args.dataset)
+                'val', nrows=20, dataset=self.args.dataset)
             test_dataset = DatasetLoader(
-                'test', nrows=2, dataset=self.args.dataset)
+                'test', nrows=20, dataset=self.args.dataset)
         else:
             train_dataset = DatasetLoader(
                 'train.line', dataset=self.args.dataset)
@@ -430,7 +430,7 @@ class MTM(nn.Module):
     def _tensorize(self, l, type=torch.long):
         return torch.as_tensor(l, dtype=type, device=self.args.device)
 
-    def update_memory_after_epoch(self, predictions_file, epoch=-1):
+    def update_memory_after_epoch(self, predictions_file, epoch):
         with torch.no_grad():
             print('\n{}\n'.format('*'*20))
             print('Updating the PMB......\n')

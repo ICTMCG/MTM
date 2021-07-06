@@ -247,7 +247,7 @@ if __name__ == "__main__":
 
         train_eval_loss, train_eval_file = evaluate(
             args, train_loader, model, criterion, 'train_eval')
-        model.update_memory_after_epoch(train_eval_file)
+        model.update_memory_after_epoch(train_eval_file, epoch)
         val_loss_updated = evaluate(
             args, val_loader, model, criterion, 'val_updated')
         test_loss_updated = evaluate(

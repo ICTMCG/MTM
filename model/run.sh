@@ -4,4 +4,4 @@ CUDA_VISIBLE_DEVICES=1 python main.py --debug False --save 'ckpts/Weibo' \
 --memory_init_file '../preprocess/PMB/data/Weibo/kmeans_cluster_centers.npy' \
 --memory_updated_step 0.3 --lambdaQ 0.6 --lambdaP 0.4 \
 --selected_sentences 3 \
---lr 5e-5 --epochs 10 --batch_size 32 \
+--lr 5e-6 --epochs 10 --batch_size 32 \
