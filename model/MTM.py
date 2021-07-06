@@ -1,10 +1,14 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from transformers import BertModel
 import pickle
 import os
 import numpy as np
 from tqdm import tqdm
+import json
+from functools import reduce
 
 from DatasetLoader import DatasetLoader
 
@@ -20,16 +24,18 @@ class MTM(nn.Module):
         print('*'*20)
         print('Selecting {} sentences in an article...'.format(
             args.selected_sentences))
-        print('BERT pretrained model:'.format(args.pretrained_model))
+        print('BERT pretrained model:', args.pretrained_model)
         print('ROT model file:', args.rouge_bert_model_file)
         print('Memory initialization file:', args.memory_init_file)
-        print('Claim-Sentence file:', args.claim_sentence_scores_file)
+        print('Claim-Sentence file:', args.claim_sentence_distance_file)
+        print('Pattern-Sentence init file:',
+              args.pattern_sentence_distance_init_file)
         print('*'*20)
 
         # Loading tokens
-        FN_tokens_file = '../tokenize/data/{}/FN_{}.pkl'.format(
+        FN_tokens_file = '../preprocess/tokenize/data/{}/FN_{}.pkl'.format(
             args.dataset, args.pretrained_model)
-        DN_tokens_file = '../tokenize/data/{}/DN_{}.pkl'.format(
+        DN_tokens_file = '../preprocess/tokenize/data/{}/DN_{}.pkl'.format(
             args.dataset, args.pretrained_model)
         self.q_tokens = pickle.load(open(FN_tokens_file, 'rb'))
         self.d_tokens_sentences = pickle.load(open(DN_tokens_file, 'rb'))
@@ -44,14 +50,17 @@ class MTM(nn.Module):
         if args.rouge_bert_model_file != '':
             # Loading ROT
             rouge_bert_dict = torch.load(
-                args.rouge_bert_model_file, map_location='cuda')
+                args.rouge_bert_model_file, map_location='cuda')['state_dict']
+
+            # print(rouge_bert_dict.keys())
 
             # update bert's weights
             updated_weights_layers = []
             updated_model_dict = dict()
             for name in self.bert.state_dict():
                 if 'embeddings' in name or 'encoder.layer.0' in name:
-                    updated_model_dict[name] = rouge_bert_dict[name]
+                    updated_model_dict[name] = rouge_bert_dict['model.{}'.format(
+                        name)]
                     updated_weights_layers.append(name)
                 else:
                     updated_model_dict[name] = self.bert.state_dict()[name]
@@ -124,9 +133,57 @@ class MTM(nn.Module):
 
         self.memory_vec_dict = {'Q': fn_embeddings, 'S': dn_embeddings}
 
-        # Claim-Sentence Scores
-        with open(self.args.claim_sentence_distance_file, 'rb') as f:
-            self.claim_sentence_distance_dict = pickle.load(f)
+        # Claim-Sentence distance dict
+        if os.path.exists(self.args.claim_sentence_distance_file):
+            with open(self.args.claim_sentence_distance_file, 'rb') as f:
+                self.claim_sentence_distance_dict = pickle.load(f)
+        else:
+            print('\n{}\n'.format('*'*20))
+            print('Init claim-sentence distance dict ...\n')
+
+            train_dataset = DatasetLoader(
+                'train.line', dataset=self.args.dataset)
+            val_dataset = DatasetLoader('val', dataset=self.args.dataset)
+            test_dataset = DatasetLoader('test', dataset=self.args.dataset)
+
+            train_loader = DataLoader(train_dataset, batch_size=1)
+            val_loader = DataLoader(val_dataset, batch_size=1)
+            test_loader = DataLoader(test_dataset, batch_size=1)
+
+            def add_elem_to_dict(qidx, didx, updated_dict):
+                Q = fn_embeddings[qidx]
+                Ss = dn_embeddings[didx]
+
+                # dists = [pytorch_euclidean_distance(Q, S) for S in Ss]
+
+                # (#sents, 768)
+                Ss = torch.cat([S[None, :] for S in Ss], dim=0)
+                dists = torch.norm(Ss - Q, p=2, dim=1)
+                dists = dists.tolist()
+
+                if qidx not in updated_dict.keys():
+                    updated_dict[qidx] = {didx: dists}
+                else:
+                    updated_dict[qidx][didx] = dists
+
+            claim_sentence_distance_dict = dict()
+
+            for _, qidx, _, didx, _ in tqdm(train_loader):
+                add_elem_to_dict(qidx.item(), didx.item(),
+                                 claim_sentence_distance_dict)
+
+            for loader in [val_loader, test_loader]:
+                for _, qidx, _, didxs, _ in tqdm(loader):
+                    for didx in didxs:
+                        add_elem_to_dict(qidx.item(), didx.item(),
+                                         claim_sentence_distance_dict)
+
+            self.claim_sentence_distance_dict = claim_sentence_distance_dict
+            with open(self.args.claim_sentence_distance_file, 'wb') as f:
+                pickle.dump(self.claim_sentence_distance_dict, f)
+
+            print('Done.')
+            print('\n{}\n'.format('*'*20))
 
         # Memory
         self.memory = np.load(self.args.memory_init_file)
@@ -166,23 +223,21 @@ class MTM(nn.Module):
         print('Updating the results of Key Sentence Selector...\n')
 
         if self.args.debug:
-            train_dataset = DatasetLoader(self.args.topk, 'train.line', nrows=20 * self.args.batch_size,
-                                          dataset=self.args.dataset)
+            train_dataset = DatasetLoader(
+                'train.line', nrows=20 * self.args.batch_size, dataset=self.args.dataset)
             val_dataset = DatasetLoader(
-                self.args.topk, 'val', nrows=2, dataset=self.args.dataset)
+                'val', nrows=2, dataset=self.args.dataset)
             test_dataset = DatasetLoader(
-                self.args.topk, 'test', nrows=2, dataset=self.args.dataset)
+                'test', nrows=2, dataset=self.args.dataset)
         else:
             train_dataset = DatasetLoader(
-                self.args.topk, 'train.line', dataset=self.args.dataset)
-            val_dataset = DatasetLoader(
-                self.args.topk, 'val', dataset=self.args.dataset)
-            test_dataset = DatasetLoader(
-                self.args.topk, 'test', dataset=self.args.dataset)
+                'train.line', dataset=self.args.dataset)
+            val_dataset = DatasetLoader('val', dataset=self.args.dataset)
+            test_dataset = DatasetLoader('test', dataset=self.args.dataset)
 
-        train_loader = DatasetLoader(train_dataset, batch_size=1)
-        val_loader = DatasetLoader(val_dataset, batch_size=1)
-        test_loader = DatasetLoader(test_dataset, batch_size=1)
+        train_loader = DataLoader(train_dataset, batch_size=1)
+        val_loader = DataLoader(val_dataset, batch_size=1)
+        test_loader = DataLoader(test_dataset, batch_size=1)
 
         tmp_pattern_pairs = dict()
 
@@ -205,7 +260,7 @@ class MTM(nn.Module):
         print('\nDone, #samples = {}, #pairs = {}, saving in {}'.format(
             len(tmp_pattern_pairs), sum([len(v) for v in tmp_pattern_pairs.values()]), save_file))
 
-        print('\nUpdating the results of memory selector......\n')
+        print('\nUpdating the results of key sentence selector......\n')
         self.tmp_selector = self.gen_key_sentence_selector(tmp_pattern_pairs)
         print('Done.')
         print('\n{}\n'.format('*'*20))
@@ -230,7 +285,7 @@ class MTM(nn.Module):
         for sidx, (_, vidx) in enumerate(pattern_paris):
             score = self.args.lambdaQ * \
                 claim_sentence_scores[sidx] + \
-                self.lambdaP * pattern_sentence_scores[sidx]
+                self.args.lambdaP * pattern_sentence_scores[sidx]
             results.append((score, vidx))
 
         scores = torch.tensor([r[0] for r in results])
@@ -252,19 +307,14 @@ class MTM(nn.Module):
 
         return selector
 
-    
     def get_important_sentences(self, qidx, didx):
         selected_num = self.args.selected_sentences
 
         important_sentences = []
         important_sentences_weights = []
-        # important_sentences_vidxs = []
-        important_centers = None
-
-        if self.AGGREGATE_MODE in [4, 5, 6]:
-            # (bz, 768, 5)
-            important_centers = self._tensorize(
-                torch.zeros((len(qidx), len(self.memory[0]), selected_num)), type=torch.float)
+        # (bz, 768, selected_num)
+        important_centers = self._tensorize(
+            torch.zeros((len(qidx), len(self.memory[0]), selected_num)), type=torch.float)
 
         for i, fn_index in enumerate(qidx):
             fn_index = fn_index.item()
@@ -272,100 +322,30 @@ class MTM(nn.Module):
 
             selected_sentences_weights = []
 
-            if self.METRIC_MODE in [0, 1]:
-                # (, 768)
-                fn = self.fn_arr[fn_index]
-                # (#sent, 768)
-                dn = self.dn_sent_arr[list(self.dn_sent_index[dn_index].values())]
+            results = self.tmp_selector[fn_index][dn_index]
 
-                # (1, #sent)
-                sim = pytorch_cos_sim(fn, dn)
-                selected_sentences = [self.d_tokens_sentences[dn_index][r]
-                                      for r in sim.argsort(descending=True)[0][:selected_num]]
+            selected_sidxs = results[0][:selected_num]
+            selected_sidxs_vidxs = results[1][:selected_num]
+            selected_sentences = [self.d_tokens_sentences[dn_index][r]
+                                  for r in selected_sidxs]
 
-            elif self.METRIC_MODE == 2:
-                fn = self.fn_tokens[fn_index]
-                dns = self.dn_sent_tokens[dn_index]
+            selected_sentences_weights = get_normalized_weights(
+                results[2][:selected_num], numbers_type='score', mode='weighted')
 
-                # (hypo=dns, ref=fn)
-                scores = self.rouge_model.get_scores([' '.join(map(str, dn)) for dn in dns],
-                                                     [' '.join(map(str, fn)) for _ in dns])
-                scores = torch.tensor([s['rouge-2']['f'] for s in scores])
-                selected_sentences = [self.d_tokens_sentences[dn_index][r]
-                                      for r in scores.argsort(descending=True)[:selected_num]]
+            # Padding to the selected_num sentences
+            selected_sentences += [[]
+                                   for _ in range(selected_num - len(selected_sentences))]
+            selected_sentences_weights += [.0 for _ in range(
+                selected_num - len(selected_sentences_weights))]
+            selected_sidxs_vidxs += [0 for _ in range(
+                selected_num - len(selected_sentences_weights))]
 
-            elif self.METRIC_MODE in [3, 5]:
-                selected_sentences = [self.d_tokens_sentences[dn_index][r]
-                                      for r in self.rouge_sim[fn_index][dn_index][:selected_num]]
-
-            elif self.METRIC_MODE == 4:
-                try:
-                    rouge_scores_fn = self.rouge_bert_sim[fn_index]
-                    rouge_scores_fn_dn = rouge_scores_fn[dn_index]
-                    selected_sentences = [self.d_tokens_sentences[dn_index][r]
-                                          for r in rouge_scores_fn_dn[:selected_num]]
-                except:
-                    selected_sentences = [self.d_tokens[dn_index]]
-
-            elif self.METRIC_MODE == 6:
-                if self.MEMORY_INIT_MODE != -1 and self.MEMORY_UPDATED_MODE == 1:
-                    # results: (ranked_sidxs, ranked_sidxs_vidxs, ranked_scores)
-                    results = self.get_ranked_sentences(
-                        qidx=fn_index, didx=dn_index,
-                        indicating_pairs=self.get_indicating_pairs(qidx=fn_index, didx=dn_index))
-
-                    if fn_index not in self.tmp_selector.keys():
-                        self.tmp_selector[fn_index] = {dn_index: results}
-                    else:
-                        self.tmp_selector[fn_index][dn_index] = results
-
-                results = self.tmp_selector[fn_index][dn_index]
-
-                selected_sidxs = results[0][:selected_num]
-                selected_sidxs_vidxs = results[1][:selected_num]
-                selected_sentences = [self.d_tokens_sentences[dn_index][r]
-                                      for r in selected_sidxs]
-
-                if self.AGGREGATE_MODE not in [0, 2]:
-                    # print('【results[2][:5]】', results[2][:selected_num])
-                    # unknown bug check
-                    if len(results[2]) >= 1 and torch.isnan(results[2][0]):
-                        indicating_pairs = self.get_indicating_pairs(qidx=fn_index, didx=dn_index)
-
-                        Q = self.memory_vec_dict['Q'][fn_index]
-                        Ss = self.memory_vec_dict['S'][dn_index]
-
-                        relevance_ds = [self.relevance_distance_dict[fn_index][dn_index][i] for i in range(len(Ss))]
-                        indicating_ds = [torch.norm((S - Q) - self.memory, p=2, dim=1) for S in Ss]
-
-                        print('*' * 20)
-                        print('results:\t{}\n'.format(results))
-                        print('indicating_pairs:\t{}\n'.format(indicating_pairs))
-                        print('relevance_distances:\t{}\n'.format(relevance_ds))
-                        print('indicating_distances:\t{}\n'.format(indicating_ds))
-                        print('*' * 20)
-
-                        print('!' * 30)
-                        exit()
-
-                    mode = 'avg' if self.AGGREGATE_MODE == 6 else 'weighted'
-                    selected_sentences_weights = get_normalized_weights(
-                        results[2][:selected_num], numbers_type='score', mode=mode)
-
-            # 将所有的样本，挑出的句子都补成5个
-            selected_sentences += [[] for _ in range(selected_num - len(selected_sentences))]
-            selected_sentences_weights += [.0 for _ in range(selected_num - len(selected_sentences_weights))]
-            selected_sidxs_vidxs += [0 for _ in range(selected_num - len(selected_sentences_weights))]
-
+            # Append
             important_sentences.append(selected_sentences)
             important_sentences_weights.append(selected_sentences_weights)
-            # important_sentences_vidxs.append(selected_sidxs_vidxs)
+            for j, vidx in enumerate(selected_sidxs_vidxs):
+                important_centers[i, :, j] = self.memory[vidx]
 
-            if important_centers is not None:
-                for j, vidx in enumerate(selected_sidxs_vidxs):
-                    important_centers[i, :, j] = self.memory[vidx]
-
-        # return important_sentences, important_sentences_weights, important_sentences_vidxs
         return important_sentences, important_sentences_weights, important_centers
 
     def forward(self, qidx, didx):
@@ -374,14 +354,15 @@ class MTM(nn.Module):
                                                                                                            didx)
         docs_sentences = []
         for sentences in important_sentences:
-            docs_sentences.append([sent[:self.doc_maxlen] for sent in sentences])
+            docs_sentences.append([sent[:self.doc_maxlen]
+                                   for sent in sentences])
 
         bert_pools = []
         bert_Q = []
         bert_S = []
 
         for s in range(self.args.selected_sentences):
-            # q_masks, s_masks: bz大小的list，其中每个元素是shape为(1, maxlen)的tensor
+            # q_masks, s_masks: batch_size's list. Each item is a (1, max_len) tensor
             input_ids, attention_mask, token_type_ids, q_masks, s_masks = zip(
                 *[self._encode(queries[i], docs_sentences[i][s]) for i in range(len(queries))])
             input_ids, attention_mask, token_type_ids = self._tensorize(input_ids), self._tensorize(
@@ -392,145 +373,172 @@ class MTM(nn.Module):
                                                        token_type_ids=token_type_ids)
             bert_pools.append(pooled_output)
 
-            # print()
-            # print('pooled_output: ', pooled_output.shape)
-            # print('sequence_output: ', sequence_output.shape)
-            # print('q_masks: ', type(q_masks), len(q_masks))
-
             # (bz, maxlen)
             Q_mask = self._tensorize(torch.cat(q_masks, dim=0))
             S_mask = self._tensorize(torch.cat(s_masks, dim=0))
-            # print('Q_mask:', Q_mask.shape)
-            # print()
 
             # (bz, maxlen, 1) * (bz, maxlen, 768) / (bz, 1, 1) -> (bz, maxlen, 768)
-            Q = Q_mask[:, :, None] * sequence_output / (torch.sum(Q_mask, dim=1)[:, None, None] + ZERO)
-            S = S_mask[:, :, None] * sequence_output / (torch.sum(S_mask, dim=1)[:, None, None] + ZERO)
+            Q = Q_mask[:, :, None] * sequence_output / \
+                (torch.sum(Q_mask, dim=1)[:, None, None] + ZERO)
+            S = S_mask[:, :, None] * sequence_output / \
+                (torch.sum(S_mask, dim=1)[:, None, None] + ZERO)
 
             # (bz, maxlen, 768) -> (bz, 768)
             bert_Q.append(torch.sum(Q, dim=1))
             bert_S.append(torch.sum(S, dim=1))
 
-        # 先把每个元素变为(bz, 768, 1)，之后再拼接为(bz, 768, 5)
+        # (bz, 768, #sents)
         bert_Q = torch.cat([Q[:, :, None] for Q in bert_Q], dim=2)
         bert_S = torch.cat([S[:, :, None] for S in bert_S], dim=2)
 
-        concat = None
-        aggregate_pooling = None
+        # weights: (bz, #sents) -> (bz, 1, #sents)
+        weights = self._tensorize(
+            important_sentences_weights, type=torch.float)
+        weights = weights[:, None, :]
 
-        if self.AGGREGATE_MODE == 0:
-            bert_pools = torch.cat([pooled[:, :, None] for pooled in bert_pools], dim=2)
-            # avg pooling
-            aggregate_pooling = torch.mean(bert_pools, dim=2)
-
-        else:
-            # weights: (bz, 5) -> (bz, 1, 5)
-            weights = self._tensorize(important_sentences_weights, type=torch.float)
-            weights = weights[:, None, :]
-
-            if self.AGGREGATE_MODE == 1:
-                bert_pools = torch.cat([pooled[:, :, None] for pooled in bert_pools], dim=2)
-                # weighted pooling
-                aggregate_pooling = torch.sum(weights * bert_pools, dim=2)
-
-            elif self.AGGREGATE_MODE == 2:
-                # (bz, 768, 5) and (bz, 768, 5) -> (bz, 768*2, 5)
-                concat = torch.cat([bert_Q, bert_S], dim=1)
-                # [Q, S], avg pooling
-                aggregate_pooling = torch.mean(concat, dim=2)
-
-            elif self.AGGREGATE_MODE == 3:
-                # concat: (bz, 768*2, 5), weights: (bz, 1, 5)
-                concat = torch.cat([bert_Q, bert_S], dim=1)
-                # [Q, S], weighted pooling
-                aggregate_pooling = torch.sum(weights * concat, dim=2)
-
-            elif self.AGGREGATE_MODE in [4, 6]:
-                # (bz, 768*3, 5)
-                concat = torch.cat([bert_Q, bert_S, important_centers], dim=1)
-                # [Q, S, V], weighted pooling
-                aggregate_pooling = torch.sum(weights * concat, dim=2)
-
-            elif self.AGGREGATE_MODE == 5:
-                # transfer: (bz, 768, 5) -> (bz, 5, 768)
-                Q = bert_Q.permute(0, 2, 1)
-                S = bert_S.permute(0, 2, 1)
-                V = important_centers.permute(0, 2, 1)
-
-                # (bz, 5, 768, 1) x (bz, 5, 1, 768) => (bz, 5, 768, 768)
-                QS = torch.matmul(Q[:, :, :, None], S[:, :, None, :])
-                # flatten (bz, 5, 768, 768) -> (bz, 5, 768 * 768) -> softmax (on dim -1) -> reshape
-                QS = self.softmax(QS.flatten(start_dim=-2)).reshape(QS.shape)
-                # (bz, 5, 768, 768) x (bz, 5, 768, 1) => (bz, 5, 768, 1) -> (bz, 5, 768)
-                S_Q = torch.matmul(QS, S[:, :, :, None]).squeeze()
-
-                VS = torch.matmul(V[:, :, :, None], S[:, :, None, :])
-                VS = self.softmax(VS.flatten(start_dim=-2)).reshape(VS.shape)
-                S_V = torch.matmul(VS, S[:, :, :, None]).squeeze()
-
-                # 5个(bz, 5, 768) -> (bz, 5, 768*5) -> (bz, 768*5, 5)
-                concat = torch.cat([Q, S, V, S_Q, S_V], dim=2).permute(0, 2, 1)
-
-                # [Q, S, V, S_Q, S_V], weighted pooling
-                aggregate_pooling = torch.sum(weights * concat, dim=2)
+        # (bz, 768*3, #sents)
+        concat = torch.cat([bert_Q, bert_S, important_centers], dim=1)
+        # (bz, 768*3)
+        aggregate_pooling = torch.sum(weights * concat, dim=2)
 
         # (bz, DIM) -> ... -> (bz, 2)
-        mlp = self.fcs[0](aggregate_pooling)
+        mlp = F.gelu(self.fcs[0](aggregate_pooling))
         for fc in self.fcs[1:]:
-            mlp = fc(mlp)
+            mlp = F.gelu(fc(mlp))
 
         mlp_drop_out = self.dropout(mlp)
         out = F.gelu(mlp_drop_out)
 
-        # if torch.any(torch.isnan(out)):
-        #     for error_i, o in enumerate(out):
-        #         if torch.any(torch.isnan(o)):
-        #             print('-' * 20)
-        #             print('out: \t{}\n'.format(o))
-        #             # print('aggregate_pooling:\t{}\n'.format(aggregate_pooling))
-        #             print('concat:\t{}\n'.format(concat[error_i]))
-        #             # print('bert_Q:\t{}\n'.format(bert_Q))
-        #             # print('bert_S:\t{}\n'.format(bert_S))
-        #             print('Q:\t{}\n'.format(Q[error_i]))
-        #             print('S:\t{}\n'.format(S[error_i]))
-        #             print('V:\t{}\n'.format(V[error_i]))
-        #             print('QS:\t{}\n'.format(QS[error_i]))
-        #             print('S_Q:\t{}\n'.format(S_Q[error_i]))
-        #             print('VS:\t{}\n'.format(VS[error_i]))
-        #             print('S_V:\t{}\n'.format(S_V[error_i]))
-        #             print('-' * 20)
-
-        #             with open(os.path.join(self.memory_save_dir, 'error_output.pkl'), 'wb') as f:
-        #                 results = [bert_Q, bert_S, important_centers, Q, S, V, QS, S_Q, VS, S_V]
-        #                 results += [weights, aggregate_pooling, mlp, mlp_drop_out, out]
-
-        #                 results = [r.detach().cpu().numpy() for r in results]
-        #                 pickle.dump(results, f)
-
-        #             exit()
-
         return out
-
 
     def _encode(self, q, d):
         q = q[:self.query_maxlen]
         d = d[:self.doc_maxlen]
 
         padding_length = self.maxlen - (len(q) + len(d) + 3)
-
-        if len(d) != 0:
-            attention_mask = [1] * (len(q) + len(d) + 3) + [0] * padding_length
-        else:
-            attention_mask = [1] * (len(q) + 1) + [0] * \
-                (self.maxlen - (len(q) + 1))
-
+        attention_mask = [1] * (len(q) + len(d) + 3) + [0] * padding_length
         input_ids = [101] + q + [102] + d + [102] + [103] * padding_length
         token_type_ids = [0] * (len(q) + 2) + [1] * (self.maxlen - len(q) - 2)
 
-        return input_ids, attention_mask, token_type_ids
+        q_mask = torch.zeros((1, self.maxlen))
+        d_mask = torch.zeros((1, self.maxlen))
+        q_mask[0][1:1 + len(q)] = 1
+        d_mask[0][2 + len(q):2 + len(q) + len(d)] = 1
+
+        return input_ids, attention_mask, token_type_ids, q_mask, d_mask
 
     def _tensorize(self, l, type=torch.long):
-        return torch.tensor(l, dtype=type, device=self.args.device)
+        return torch.as_tensor(l, dtype=type, device=self.args.device)
+
+    def update_memory_after_epoch(self, predictions_file, epoch=-1):
+        with torch.no_grad():
+            print('\n{}\n'.format('*'*20))
+            print('Updating the PMB......\n')
+
+            with open(predictions_file, 'r') as f:
+                tmp_predictions = json.load(f)
+
+            pos_samples_dict = dict()
+            neg_samples_dict = dict()
+
+            # Get pos/neg samples and weights for every memory_cluster
+            for qidx, didx, y, y_hat in tmp_predictions:
+                ranked_sidxs, ranked_sidxs_vidxs, _ = self.tmp_selector[qidx][didx]
+                selected_sidxs = ranked_sidxs[:self.args.selected_sentences]
+                selected_sidxs_vidxs = ranked_sidxs_vidxs[:self.args.selected_sentences]
+
+                Q = self.memory_vec_dict['Q'][qidx]
+                Ss = [self.memory_vec_dict['S'][didx][sidx]
+                      for sidx in selected_sidxs]
+                points = [torch.as_tensor(S - Q) for S in Ss]
+
+                if (y_hat > 0.5) or (y_hat == 0.5 and y == 0):
+                    samples_dict = pos_samples_dict
+                else:
+                    samples_dict = neg_samples_dict
+
+                # when y_hat >= 0.5, the sample is in pos_samples:
+                #       weight = y_hat - 0.5
+                #       the more y_hat, the rightter prediction -> a more weight
+                #
+                # when y_hat < 0.5, the sample is in neg_samples:
+                #       weight = 0.5 - y_hat
+                #       the less y_hat, the wronger prediction -> a more weight
+
+                weight = abs(y_hat - 0.5)
+
+                for i, vidx in enumerate(selected_sidxs_vidxs):
+                    if vidx not in samples_dict.keys():
+                        samples_dict[vidx] = [(weight, points[i])]
+                    else:
+                        samples_dict[vidx].append((weight, points[i]))
+
+            # Logging
+            for vidx in range(len(self.memory)):
+                pos_num = len(
+                    pos_samples_dict[vidx]) if vidx in pos_samples_dict.keys() else 0
+                neg_num = len(
+                    neg_samples_dict[vidx]) if vidx in neg_samples_dict.keys() else 0
+                print('Memory Cluster {}: #positive samples = {}, #negative samples = {}'.format(
+                    vidx, pos_num, neg_num))
+
+            # Updating every memory cluster
+
+            # Step1: Calculate the center of samples
+            for samples_dict in [pos_samples_dict, neg_samples_dict]:
+                for vidx, samples in samples_dict.items():
+                    weight_sum = sum([item[0] for item in samples]) + ZERO
+
+                    samples = [item[0] / weight_sum * item[1]
+                               for item in samples]
+                    samples_dict[vidx] = (weight_sum, reduce(
+                        lambda x, y: x + y, samples))
+
+            # Step2: Draw closer / Push away the memory cluster
+            for vidx, V in enumerate(self.memory):
+                weight_pos = 0
+                weight_neg = 0
+                a = torch.zeros(V.shape)
+                b = torch.zeros(V.shape)
+
+                if vidx in pos_samples_dict.keys():
+                    weight_pos, pos = pos_samples_dict[vidx]
+                    a = pos - V
+                if vidx in neg_samples_dict.keys():
+                    weight_neg, neg = neg_samples_dict[vidx]
+                    b = V - neg
+
+                if weight_pos + weight_neg == 0:
+                    continue
+
+                alpha = weight_pos / (weight_pos + weight_neg)
+                beta = weight_neg / (weight_pos + weight_neg)
+
+                a = self._tensorize(a, type=torch.float)
+                b = self._tensorize(b, type=torch.float)
+                alpha = self._tensorize(alpha, type=torch.float)
+                beta = self._tensorize(beta, type=torch.float)
+
+                grad = alpha * a + beta * b
+                grad /= torch.norm(grad)
+
+                self.memory[vidx] += self.args.memory_updated_step * \
+                    torch.norm(V) * grad
+
+        # Saving
+        save_file = 'memory_epoch{}.npy'.format(epoch)
+        np.save(os.path.join(self.memory_save_dir, save_file),
+                self.memory.detach().cpu().numpy())
+        print('\nDone, saving in {}'.format(save_file))
+
+        # Update key sentence selector
+        pattern_sentence_distance_save_file = 'pattern_sentence_distance_epoch{}.pkl'.format(
+            epoch)
+        pattern_sentence_distance_save_file = os.path.join(
+            self.memory_save_dir, pattern_sentence_distance_save_file)
+        self.update_key_sentence_selector(pattern_sentence_distance_save_file)
+
+        print('\n{}\n'.format('*'*20))
 
 
 def get_scaled_scores(distances):
@@ -548,3 +556,45 @@ def get_scaled_scores(distances):
 
     m, M = min(distances), max(distances)
     return [1 - (d - m) / (M - m + ZERO) for d in distances]
+
+
+def get_normalized_weights(sorted_numbers, numbers_type='score', mode='weighted'):
+    """
+    :param sorted_numbers
+    :param numbers_type: ['score', 'distance']
+    :param mode: ['weighted', 'avg']
+    :return: weights: desending
+    """
+
+    assert numbers_type in ['score', 'distance']
+    assert mode in ['weighted', 'avg']
+
+    if len(sorted_numbers) == 1:
+        return [1.0]
+
+    if mode == 'avg':
+        avg = 1.0 / len(sorted_numbers)
+        weights = [avg for _ in sorted_numbers]
+        return weights
+
+    sorted_numbers = torch.as_tensor(sorted_numbers)
+
+    # Normalize
+    sorted_numbers /= torch.sum(sorted_numbers) + ZERO
+
+    if numbers_type == 'distance':
+        weights = (1 - sorted_numbers) / (len(sorted_numbers) - 1)
+    else:
+        weights = sorted_numbers
+
+    return weights.tolist()
+
+
+def pytorch_euclidean_distance(a, b):
+    if not isinstance(a, torch.Tensor):
+        a = torch.tensor(a)
+
+    if not isinstance(b, torch.Tensor):
+        b = torch.tensor(b)
+
+    return torch.dist(a, b)

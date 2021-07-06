@@ -1,12 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-@author: RMSnow
-@file: eval.py
-@time: 2020/10/29 10:50
-@contact: xueyao_98@foxmail.com
-
-"""
-
 import os
 import time
 import json
@@ -14,6 +5,7 @@ from tqdm import tqdm
 import pickle
 import random
 import numpy as np
+import pandas as pd
 
 import torch
 import torch.nn as nn
@@ -21,9 +13,10 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.cuda.amp import GradScaler, autocast
 from transformers import AdamW, get_cosine_schedule_with_warmup
 
-from RougeBert import RougeBert
+from MTM import MTM
 from DatasetLoader import DatasetLoader
 from config import parser
+from evaluation import eval_for_outputs
 
 
 def evaluate(args, loader, model, criterion, type):
@@ -33,35 +26,59 @@ def evaluate(args, loader, model, criterion, type):
     model.eval()
     total_loss = 0.
     outputs = []
-    num_batches = 0
 
-    with torch.no_grad():
-        for step, (qidxs, didxs, sidxs, labels) in enumerate(tqdm(loader)):
-            # (bz, 2)
-            output = model(qidxs, didxs, sidxs)
-            labels = torch.cat([x[:, None] for x in labels], dim=-1)
-            labels = torch.as_tensor(
-                labels, dtype=torch.float, device=args.device)
+    if type == 'train_eval':
+        with torch.no_grad():
+            for qids, qidxs, dids, didxs, labels in tqdm(loader):
+                output = model(qidxs, didxs)
+                loss = criterion(output, labels.to(args.device))
+                total_loss += loss.item()
 
-            loss = criterion(output, labels)
-            total_loss += loss.item()
+                # save predictions for updating memory
+                output_prob = softmax(output)
+                predictions = [(qidxs[i], didxs[i], t, output_prob[i][t])
+                               for i, t in enumerate(labels)]
+                predictions = [[x.item() for x in p] for p in predictions]
 
-            for i, qidx in enumerate(qidxs):
-                qidx = qidx.item()
-                didx = didxs[i].item()
-                sidx = sidxs[i].item()
-                outputs.append(
-                    (qidx, didx, sidx, output[i].cpu().numpy().tolist()))
+                outputs += predictions
 
-            num_batches += 1
+        total_loss /= len(loader)
+        file = os.path.join(args.save, type + '_outputs_' +
+                            str(args.current_epoch) + '.json')
+        json.dump(outputs, open(file, 'w'))
 
-    e = args.current_epoch
-    total_loss /= num_batches
-    file = os.path.join(args.save, type + '_outputs_' + str(e) + '_' + str(
-        args.local_rank) + '_loss_{:.4f}'.format(total_loss) + '.json')
-    json.dump(outputs, open(file, 'w'))
+        return total_loss, file
 
-    return total_loss
+    elif type in ['val', 'test', 'val_updated', 'test_updated']:
+        with torch.no_grad():
+            for qid, qidx, dids, didxs, labels in tqdm(loader):
+                output = model([qidx] * len(didxs), didxs)
+                loss = criterion(output, torch.as_tensor(labels).to(args.device))
+                total_loss += loss.item()
+
+                try:
+                    score = [(dids[i][0].item(), x[0], x[1])
+                             for i, x in enumerate(output.cpu().numpy().tolist())]
+                except:
+                    score = [(dids[i][0], x[0], x[1])
+                             for i, x in enumerate(output.cpu().numpy().tolist())]
+
+                try:
+                    outputs.append((qid[0].item(), score))
+                except:
+                    outputs.append((qid[0], score))
+
+        total_loss /= len(loader)
+        file = os.path.join(args.save, type + '_outputs_' +
+                            str(args.current_epoch) + '.json')
+        json.dump(outputs, open(file, 'w'))
+
+        eval_for_outputs(typ=type, dataset=args.dataset, outputs_file=file)
+        return total_loss
+
+    else:
+        print('Error: the illegal param of evaluate_type!')
+        exit()
 
 
 if __name__ == "__main__":
@@ -90,13 +107,15 @@ if __name__ == "__main__":
 
     print('-----------------------------------------\nLoading model...\n')
     start = time.time()
-    model = RougeBert(args)
+    model = MTM(args)
     print(model)
     print('\nLoading model time: {:.2f}s\n-----------------------------------------\n'.format(
         time.time() - start))
 
-    criterion = nn.MSELoss().cuda()
-    optimizer = AdamW(model.parameters(), lr=args.lr)
+    criterion = nn.CrossEntropyLoss().cuda()
+    softmax = nn.Softmax(dim=1)
+    optimizer = AdamW(filter(lambda p: p.requires_grad,
+                             model.parameters()), lr=args.lr)
 
     if args.fp16:
         scaler = GradScaler()
@@ -115,7 +134,9 @@ if __name__ == "__main__":
     start = time.time()
 
     nrows = 20 * args.batch_size if args.debug else None
-    train_dataset = DatasetLoader('train', nrows=nrows, dataset=args.dataset)
+    train_dataset = DatasetLoader(
+        'train.line', nrows=nrows, dataset=args.dataset)
+    nrows = 20 if args.debug else None
     val_dataset = DatasetLoader('val', nrows=nrows, dataset=args.dataset)
     test_dataset = DatasetLoader('test', nrows=nrows, dataset=args.dataset)
 
@@ -129,20 +150,20 @@ if __name__ == "__main__":
         sampler=train_sampler
     )
 
-    val_sampler = RandomSampler(val_dataset)
+    val_sampler = SequentialSampler(val_dataset)
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size,
+        batch_size=1,
         num_workers=8,
         pin_memory=(torch.cuda.is_available()),
         drop_last=False,
         sampler=val_sampler
     )
 
-    test_sampler = RandomSampler(test_dataset)
+    test_sampler = SequentialSampler(test_dataset)
     test_loader = DataLoader(
         test_dataset,
-        batch_size=args.batch_size,
+        batch_size=1,
         num_workers=8,
         pin_memory=(torch.cuda.is_available()),
         drop_last=False,
@@ -178,11 +199,6 @@ if __name__ == "__main__":
     start = time.time()
     args.global_step = 0
 
-    layers = []
-    for name in model.state_dict():
-        layers.append(name)
-    init_model_params = model.state_dict()
-
     best_val_loss = None
     for epoch in range(args.start_epoch, args.epochs):
         args.current_epoch = epoch
@@ -193,26 +209,12 @@ if __name__ == "__main__":
 
         train_loss = 0
         lr = optimizer.param_groups[0]['lr']
-        for step, (qidxs, didxs, sidxs, labels) in enumerate(tqdm(train_loader)):
+        for step, (qids, qidxs, dids, didxs, labels) in enumerate(tqdm(train_loader)):
             optimizer.zero_grad()
+
             with autocast():
-                # labels: two elements. every element's shape = tensor([bz])
-                # so: two (bz, 1) -> (bz, 2)
-                labels = torch.cat([x[:, None] for x in labels], dim=-1)
-                labels = torch.as_tensor(
-                    labels, dtype=torch.float, device=args.device)
-
-                output = model(qidxs, didxs, sidxs)
-                loss = criterion(output, labels)
-
-                reg_loss = 0
-                for layer in layers:
-                    if 'weight' in layer or 'bias' in layer:
-                        diff = init_model_params[layer] - \
-                            model.state_dict()[layer]
-                        reg_loss += diff.norm(2) ** 2
-
-                loss += args.rouge_bert_regularize * reg_loss
+                output = model(qidxs, didxs)
+                loss = criterion(output, labels.to(args.device))
 
             if args.fp16:
                 scaler.scale(loss).backward()
@@ -239,11 +241,30 @@ if __name__ == "__main__":
                 'state_dict': model.state_dict(),
                 'optimizer': optimizer.state_dict()
             },
+                os.path.join(
+                    args.save, '{}_before_memory_updated.pt'.format(epoch))
+            )
+
+        train_eval_loss, train_eval_file = evaluate(
+            args, train_loader, model, criterion, 'train_eval')
+        model.update_memory_after_epoch(train_eval_file)
+        val_loss_updated = evaluate(
+            args, val_loader, model, criterion, 'val_updated')
+        test_loss_updated = evaluate(
+            args, test_loader, model, criterion, 'test_updated')
+
+        if best_val_loss > val_loss_updated:
+            best_val_loss = val_loss_updated
+            torch.save({
+                'epoch': epoch,
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict()
+            },
                 os.path.join(args.save, '{}.pt'.format(epoch))
             )
 
-        print('Epoch [{}/{}]\t Train Loss: {}\t Val Loss: {}\t Test Loss: {}\t lr: {}\n'.format(
-            epoch, args.epochs, train_loss, val_loss, test_loss, lr))
+        print('Epoch [{}/{}]\t Train Loss: {}\t Val Loss: {}\t Test Loss: {}\t Val Updated Loss: {}\t Test Updated Loss: {}\t lr: {}\n'.format(
+            epoch, args.epochs, train_eval_loss, val_loss, test_loss, val_loss_updated, test_loss_updated, lr))
 
     print('Training Time:', int(time.time() - start))
     print('End time:', time.strftime(

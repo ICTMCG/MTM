@@ -9,7 +9,6 @@
 """
 
 from argparse import ArgumentParser, ArgumentTypeError
-import os
 
 ################## Parser ##################
 
@@ -48,8 +47,10 @@ parser.add_argument('--claim_sentence_distance_file', type=str,
 parser.add_argument('--pattern_sentence_distance_init_file',
                     type=str, default='./data/pattern_sentence_distance_init.pkl',
                     help='The scores will be updated when PMB is updated.')
+parser.add_argument('--memory_updated_step', type=float, default=0.3)
 
 # key sentences selection
+parser.add_argument('--selected_sentences', type=int, default=3)
 parser.add_argument('--lambdaQ', type=float, default=0.6,
                     help='weight of claim-sentence')
 parser.add_argument('--lambdaP', type=float, default=0.4,
@@ -85,7 +86,6 @@ parser.add_argument('--seed', type=int, default=42,
 parser.add_argument('--device', default='cpu')
 parser.add_argument('--fp16', type=str2bool, default=True,
                     help='use fp16 for training')
-parser.add_argument('--local_rank', type=int, default=-1)
 
 ################## Debug ##################
 parser.add_argument('--debug', type=str2bool, default=False)

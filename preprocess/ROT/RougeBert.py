@@ -103,4 +103,4 @@ class RougeBert(nn.Module):
         return input_ids, attention_mask, token_type_ids
 
     def _tensorize(self, l):
-        return torch.tensor(l, dtype=torch.long, device=self.args.device)
+        return torch.as_tensor(l, dtype=torch.long, device=self.args.device)
