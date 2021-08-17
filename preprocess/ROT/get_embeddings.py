@@ -74,6 +74,7 @@ if __name__ == '__main__':
     emsize = embedding_layer.word_embeddings.embedding_dim
     print('RougeBert: {},\n\n Embedding Layer:\n {}\n'.format(
         args.rouge_bert_model_file, embedding_layer))
+    torch.save(embedding_layer, 'data/{}/ROT_embedding_layer.pt'.format(args.dataset))
 
     with open('../tokenize/data/{}/FN_{}.pkl'.format(args.dataset, args.pretrained_model), 'rb') as f:
         fn_tokens = pickle.load(f)

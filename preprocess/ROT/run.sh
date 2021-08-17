@@ -8,6 +8,6 @@ CUDA_VISIBLE_DEVICES=1 python main.py --debug False \
 --fp16 True
 
 # Get Embeddings
-CUDA_VISIBLE_DEVICES=2 python get_embeddings.py \
+CUDA_VISIBLE_DEVICES=3 python get_embeddings.py \
 --rouge_bert_model_file './ckpts/Weibo/9.pt' \
 --batch_size 1024 --embeddings_type static

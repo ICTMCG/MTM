@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=1 python main.py --debug False --save 'ckpts/Weibo' \
+CUDA_VISIBLE_DEVICES=3 python main.py --debug False --save 'ckpts/Weibo' \
 --dataset 'Weibo' --pretrained_model 'bert-base-chinese' \
 --rouge_bert_model_file '../preprocess/ROT/ckpts/Weibo/9.pt' \
 --memory_init_file '../preprocess/PMB/data/Weibo/kmeans_cluster_centers.npy' \

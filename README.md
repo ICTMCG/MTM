@@ -1,3 +1,5 @@
+**[Notes]** The repo may be incomplete and some of the code is a bit messy. We will improve in the future. Readme will also include more details. Coming soon stay tuned :)
+
 # Pipeline
 
 ## Weibo Dataset
