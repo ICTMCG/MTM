@@ -1,5 +1,0 @@
-# Twitter Dataset
-
-## Claim
-
-## Articles
