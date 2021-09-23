@@ -16,3 +16,5 @@
 *.test
 *.line
 *.rouge
+
+./dataset/Weibo/splits/data/events.*
