@@ -31,6 +31,14 @@ def add_elem_to_dict(qidx, didx):
         rouge_rank_dict[qidx][didx] = scores
 
 
+def load_raw_df(dataset_type):
+    file = '../../dataset/{}/splits/data/top50.{}.line'.format(
+        dataset, dataset_type)
+    df = pd.read_csv(file, sep="\t", names=[
+        "qid", "qidx", "did", "didx", "label"])
+    return df
+
+
 if __name__ == '__main__':
     parser = ArgumentParser(description='Prepare RougeBert\'s Traning Data')
     parser.add_argument('--dataset', type=str)
@@ -45,6 +53,7 @@ if __name__ == '__main__':
     rouge_labels_file = os.path.join(save_dir, 'rouge2_labels.pkl')
 
     if not os.path.exists(rouge_labels_file):
+        print('Calculating the rouge2 scores...\n')
         rouge_scores_file = os.path.join(save_dir, 'rouge2_scores_raw.pkl')
 
         with open(os.path.join(tokens_dir, 'FN_{}.pkl'.format(pretrained_model)), 'rb') as f:
@@ -52,28 +61,18 @@ if __name__ == '__main__':
         with open(os.path.join(tokens_dir, 'DN_{}.pkl'.format(pretrained_model)), 'rb') as f:
             dn_sent_tokens = pickle.load(f)
 
-        train_dataset = DatasetLoader('train.line')
-        val_dataset = DatasetLoader('val')
-        test_dataset = DatasetLoader('test')
-
-        train_loader = DataLoader(train_dataset, batch_size=1)
-        val_loader = DataLoader(val_dataset, batch_size=1)
-        test_loader = DataLoader(test_dataset, batch_size=1)
-
         rg = rouge.Rouge(metrics=['rouge-2'])
-
         rouge_rank_dict = dict()
 
-        for _, qidx, _, didx, _ in tqdm(train_loader):
-            add_elem_to_dict(qidx.item(), didx.item())
+        for t in ['train', 'val', 'test']:
+            print('Calculating {} dataset...'.format(t))
+            df = load_raw_df(t)
+            qidxs, didxs = df['qidx'].tolist(), df['didx'].tolist()
+            assert len(qidxs) == len(didxs)
 
-        for _, qidx, _, didxs, _ in tqdm(val_loader):
-            for didx in didxs:
-                add_elem_to_dict(qidx.item(), didx.item())
-
-        for _, qidx, _, didxs, _ in tqdm(test_loader):
-            for didx in didxs:
-                add_elem_to_dict(qidx.item(), didx.item())
+            for i, qidx in enumerate(tqdm(qidxs)):
+                didx = didxs[i]
+                add_elem_to_dict(qidx, didx)
 
         with open(rouge_scores_file, 'wb') as f:
             pickle.dump(rouge_rank_dict, f)
@@ -82,7 +81,6 @@ if __name__ == '__main__':
 
         print()
         print(type(scores), len(scores))
-        # print(scores[0])
         print()
 
         labels = dict()
@@ -101,10 +99,7 @@ if __name__ == '__main__':
 
     for t in ['train', 'val', 'test']:
         print('\nPreparing {} data...\n'.format(t))
-
-        file = '../../dataset/{}/splits/data/top50.{}.line'.format(dataset, t)
-        df = pd.read_csv(file, sep="\t", names=[
-                         "qid", "qidx", "did", "didx", "label"])
+        df = load_raw_df(dataset_type=t)
         sz = len(df)
 
         qidxs = []

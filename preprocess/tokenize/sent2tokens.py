@@ -24,18 +24,24 @@ if __name__ == '__main__':
     tokenizer = BertTokenizer.from_pretrained(pretrained_model)
 
     if dataset == 'Weibo':
-        with open('../../dataset/Weibo/raw/FN_11934_filtered.json', 'r') as f:
-            FN = json.load(f)
-        with open('../../dataset/Weibo/raw/DN_27505_filtered.json', 'r') as f:
-            DN = json.load(f)
-    else:
-        pass
+        fn_file = '../../dataset/Weibo/raw/FN_11934_filtered.json'
+        dn_file = '../../dataset/Weibo/raw/DN_27505_filtered.json'
+        content_key = 'content_all'
+    elif dataset == 'Twitter':
+        fn_file = '../../dataset/Twitter/raw/FN_10003.json'
+        dn_file = '../../dataset/Twitter/raw/DN_1703.json'
+        content_key = 'content'
+    
+    with open(fn_file, 'r') as f:
+        FN = json.load(f)
+    with open(dn_file, 'r') as f:
+        DN = json.load(f)
 
-    fn_tokens = [get_tokens(fn['content_all']) for fn in tqdm(FN)]
+    fn_tokens = [get_tokens(fn[content_key]) for fn in tqdm(FN)]
 
     dn_tokens = []
     for dn in tqdm(DN):
-        tokens = [get_tokens(sent) for sent in dn['content_all']]
+        tokens = [get_tokens(sent) for sent in dn[content_key]]
         dn_tokens.append(tokens)
 
     fn_df = pd.DataFrame({'tokens_num': [len(tokens) for tokens in fn_tokens]})
