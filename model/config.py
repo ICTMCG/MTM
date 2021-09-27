@@ -42,11 +42,9 @@ parser.add_argument('--rouge_bert_regularize', type=float, default=0.01)
 
 # memory related
 parser.add_argument('--memory_init_file', type=str, help='PMB')
-parser.add_argument('--claim_sentence_distance_file', type=str,
-                    default='./data/claim_sentence_distance.pkl')
+parser.add_argument('--claim_sentence_distance_file', type=str)
 parser.add_argument('--pattern_sentence_distance_init_file',
-                    type=str, default='./data/pattern_sentence_distance_init.pkl',
-                    help='The scores will be updated when PMB is updated.')
+                    type=str, help='The scores will be updated when PMB is updated.')
 parser.add_argument('--memory_updated_step', type=float, default=0.3)
 
 # key sentences selection

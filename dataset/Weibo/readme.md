@@ -1,4 +1,4 @@
-# Weibo Dataset for Detecting Previously Fact-Checked Claims
+# Weibo Dataset
 
 ## Notice
 
@@ -38,8 +38,24 @@ The raw dataset can be seen in `raw` folder, including a claims' file and a arti
 
 ### Dataset Splits
 
-In `splits` folder, we splitted the datasets on the basis of the ranking results of Stage 1 (BM25).
+In `splits` folder, we splitted the datasets on the basis of the ranking results of Stage 1 (BM25). The results are saved in `splits/data`. These `top50`-prefixed files are CSV-friendly format, which you can refer to `MTM/model/DatasetLoader.py` to load them.
 
-- The procedure of splitting is shown in `splits/data_splits.ipynb`.
-- The results are saved in `splits/data`. These `top50`-prefixed files are CSV-friendly format, which you can refer to `MTM/model/DatasetLoader.py` to load them.
+If you want to reproduce the dataset splits (note that is not necessary):
+
+1. To calculate the BM25 ranking matrix,
+
+   ```
+   cd MTM/preprocess/BM25
+   mkdir data
+   ```
+
+   then you need to run `Weibo.ipynb` to get the `data/bm25_scores_(11934, 27505).npy`.
+
+2. To split the datasets,
+
+   ```
+   cd MTM/dataset/Weibo/splits
+   ```
+
+   then you need to run `data_splits.ipynb` to get the `top50`-prefixed files in `data`.
 

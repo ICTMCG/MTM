@@ -17,12 +17,12 @@ finetune_front_layers	False
 finetune_inter_layers	True
 bert_mlp_layers	5
 lr	0.0001
-epochs	2
+epochs	10
 batch_size	16
 start_epoch	0
 resume	
-save	./ckpts/debug
+save	ckpts/Twitter
 seed	42
 device	cuda
 fp16	True
-debug	True
+debug	False
