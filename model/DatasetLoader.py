@@ -10,6 +10,15 @@ class DatasetLoader(Dataset):
         self.split_set = split_set
         file = os.path.join(dataset_split_dir,
                             'top{}.{}'.format(top, split_set))
+
+        """
+        qid: the unique id of the query claim
+        qidx: the index of the query claim
+        did: the unique id(s) of the debunking article(s)
+        didx: the index(es) of the debunking article(s)
+        label: the label(s) of the "query, article(s)" pair(s), 1 for "relevant" and 0 for "irrelevant"
+        """
+
         self.dataset = pd.read_csv(file, sep="\t", names=[
                                    'qid', 'qidx', 'did', 'didx', 'label'], nrows=nrows)
 

@@ -113,7 +113,7 @@ def compute_ranking_metrics(ans, pred, digits=True):
     result = {
         'MRR': MRR(ranks)
     }
-    for metric in ['MAP', 'HasPositives', 'MAP_updated']:
+    for metric in ['MAP', 'HasPositives']:
         for k in [1, 3, 5, 10, 20, 50]:
             # for k in [1, 3, 5]:
             result[metric + '@' + str(k)] = eval(metric +
@@ -140,26 +140,26 @@ def MRR(ranks):
     return mrr
 
 
+# def MAP(ranks, k):
+#     APs = []
+#     for rank in ranks:
+#         AP = 0
+#         i = 1
+
+#         for r in rank:
+#             if r > 0 and r <= k:
+#                 AP += i / r
+#                 i += 1
+#         if len(rank) == 0:
+#             AP = 0
+#         else:
+#             AP /= min(len(rank), k)
+#         APs.append(AP)
+
+#     return np.mean(APs)
+
+
 def MAP(ranks, k):
-    APs = []
-    for rank in ranks:
-        AP = 0
-        i = 1
-
-        for r in rank:
-            if r > 0 and r <= k:
-                AP += i / r
-                i += 1
-        if len(rank) == 0:
-            AP = 0
-        else:
-            AP /= min(len(rank), k)
-        APs.append(AP)
-
-    return np.mean(APs)
-
-
-def MAP_updated(ranks, k):
     APs = []
     for rank in ranks:
         AP = 0
