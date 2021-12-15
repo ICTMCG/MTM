@@ -413,7 +413,7 @@ class MTM(nn.Module):
         # for fc in self.fcs[1:]:
         #     mlp = F.gelu(fc(mlp))
 
-        print('\nmlp output: {}\n'.format(mlp))
+        # print('\nmlp output: {}\n'.format(mlp))
 
         mlp_drop_out = self.dropout(mlp)
         out = F.gelu(mlp_drop_out)

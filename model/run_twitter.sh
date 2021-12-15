@@ -7,5 +7,5 @@ CUDA_VISIBLE_DEVICES=3 python main.py --debug False --save 'ckpts/Twitter' \
 --pattern_sentence_distance_init_file './data/Twitter/pattern_sentence_distance_init.pkl' \
 --memory_updated_step 0.3 --lambdaQ 0.6 --lambdaP 0.4 \
 --selected_sentences 5 \
---lr 1e-4 --epochs 10 --batch_size 16 \
+--lr 5e-6 --epochs 10 --batch_size 16 \
 --fp16 True --use_weighted_training True \
