@@ -401,10 +401,19 @@ class MTM(nn.Module):
         # (bz, 768*3)
         aggregate_pooling = torch.sum(weights * concat, dim=2)
 
+        # print('\naggregate_pooling: {}\n'.format(aggregate_pooling[:, :20]))
+
         # (bz, DIM) -> ... -> (bz, 2)
-        mlp = F.gelu(self.fcs[0](aggregate_pooling))
-        for fc in self.fcs[1:]:
-            mlp = F.gelu(fc(mlp))
+        mlp = aggregate_pooling
+        for fc in self.fcs:
+            mlp = fc(mlp)
+        mlp = F.gelu(mlp)
+
+        # mlp = F.gelu(self.fcs[0](aggregate_pooling))
+        # for fc in self.fcs[1:]:
+        #     mlp = F.gelu(fc(mlp))
+
+        print('\nmlp output: {}\n'.format(mlp))
 
         mlp_drop_out = self.dropout(mlp)
         out = F.gelu(mlp_drop_out)

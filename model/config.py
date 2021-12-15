@@ -63,6 +63,7 @@ parser.add_argument('--finetune_inter_layers', type=str2bool, default=True)
 parser.add_argument('--bert_mlp_layers', type=int, default=5)
 
 # networks training hyperparameters
+parser.add_argument('--use_weighted_training', type=str2bool, default=False)
 parser.add_argument('--lr', type=float, default=5e-5,
                     help='initial learning rate')
 parser.add_argument('--epochs', type=int, default=10,

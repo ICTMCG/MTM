@@ -22,6 +22,18 @@ class DatasetLoader(Dataset):
         self.dataset = pd.read_csv(file, sep="\t", names=[
                                    'qid', 'qidx', 'did', 'didx', 'label'], nrows=nrows)
 
+        # Class Distribution
+        if '.line' in split_set:
+            labels = set(self.dataset['label'])
+            class_nums = dict()
+            for l in labels:
+                class_nums[l] = len(self.dataset[self.dataset['label'] == l])
+                print('label {}: sz = {}'.format(l, class_nums[l]))
+
+            sz = len(self.dataset)
+            self.samples_weights = [sz/class_nums[l]
+                                    for l in self.dataset['label']]
+
         print('\n{} loading successfully!\n'.format(file))
 
     def __len__(self):

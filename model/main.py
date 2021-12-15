@@ -9,7 +9,7 @@ import pandas as pd
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, WeightedRandomSampler
 from torch.cuda.amp import GradScaler, autocast
 from transformers import AdamW, get_cosine_schedule_with_warmup
 
@@ -53,7 +53,8 @@ def evaluate(args, loader, model, criterion, type):
         with torch.no_grad():
             for qid, qidx, dids, didxs, labels in tqdm(loader):
                 output = model([qidx] * len(didxs), didxs)
-                loss = criterion(output, torch.as_tensor(labels).to(args.device))
+                loss = criterion(output, torch.as_tensor(
+                    labels).to(args.device))
                 total_loss += loss.item()
 
                 try:
@@ -105,31 +106,6 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    print('-----------------------------------------\nLoading model...\n')
-    start = time.time()
-    model = MTM(args)
-    print(model)
-    print('\nLoading model time: {:.2f}s\n-----------------------------------------\n'.format(
-        time.time() - start))
-
-    criterion = nn.CrossEntropyLoss().cuda()
-    softmax = nn.Softmax(dim=1)
-    optimizer = AdamW(filter(lambda p: p.requires_grad,
-                             model.parameters()), lr=args.lr)
-
-    if args.fp16:
-        scaler = GradScaler()
-
-    if torch.cuda.is_available():
-        model = model.cuda()
-
-    if args.resume != '':
-        resume_dict = torch.load(args.resume)
-
-        model.load_state_dict(resume_dict['state_dict'])
-        optimizer.load_state_dict(resume_dict['optimizer'])
-        args.start_epoch = resume_dict['epoch'] + 1
-
     print('Loading data...')
     start = time.time()
 
@@ -140,7 +116,13 @@ if __name__ == "__main__":
     val_dataset = DatasetLoader('val', nrows=nrows, dataset=args.dataset)
     test_dataset = DatasetLoader('test', nrows=nrows, dataset=args.dataset)
 
-    train_sampler = RandomSampler(train_dataset)
+    if not args.use_weighted_training:
+        train_sampler = RandomSampler(train_dataset)
+    else:
+        print('Training imbalanced data with weighted sampling...')
+        train_sampler = WeightedRandomSampler(
+            weights=train_dataset.samples_weights, num_samples=len(train_dataset), replacement=True)
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -171,6 +153,31 @@ if __name__ == "__main__":
     )
 
     print('Loading data time: {}s'.format(int(time.time() - start)))
+
+    print('-----------------------------------------\nLoading model...\n')
+    start = time.time()
+    model = MTM(args)
+    print(model)
+    print('\nLoading model time: {:.2f}s\n-----------------------------------------\n'.format(
+        time.time() - start))
+
+    criterion = nn.CrossEntropyLoss().cuda()
+    softmax = nn.Softmax(dim=1)
+    optimizer = AdamW(filter(lambda p: p.requires_grad,
+                             model.parameters()), lr=args.lr)
+
+    if args.fp16:
+        scaler = GradScaler()
+
+    if torch.cuda.is_available():
+        model = model.cuda()
+
+    if args.resume != '':
+        resume_dict = torch.load(args.resume)
+
+        model.load_state_dict(resume_dict['state_dict'])
+        optimizer.load_state_dict(resume_dict['optimizer'])
+        args.start_epoch = resume_dict['epoch'] + 1
 
     if args.resume == '':
         args_file = os.path.join(args.save, 'args.txt')
@@ -226,6 +233,9 @@ if __name__ == "__main__":
 
             if scheduler:
                 scheduler.step()
+
+            # if step % 3 == 0:
+            #     print('\noutput: {}\n'.format(output))
 
             train_loss += loss.item()
             args.global_step += 1
